@@ -1,0 +1,488 @@
+I have an Aula F75 Mechanical Keyboard. and it has a volume knob. Lets make it a steering wheel. Thats it, thats the idea. 
+
+You are helping build an experimental Linux desktop application called KnobWheel.
+
+KnobWheel converts a keyboard rotary encoder / volume knob into a realistic virtual steering wheel for driving games like Euro Truck Simulator 2.
+
+The target user is a developer on Ubuntu Linux using Python initially.
+
+====================================================
+PRIMARY GOAL
+====================================================
+
+The FIRST goal is NOT polish.
+
+The first goal is:
+
+"Make ETS2 detect a virtual steering axis controlled by the keyboard knob."
+
+Everything else is secondary.
+
+Do NOT overengineer early.
+
+====================================================
+IMPORTANT DEVELOPMENT PHILOSOPHY
+====================================================
+
+Avoid:
+- giant frameworks
+- premature abstractions
+- plugin systems
+- enterprise architecture
+- overcomplicated class hierarchies
+- rewriting in Rust too early
+- multi-platform support initially
+
+Focus on:
+- one working vertical slice
+- fast iteration
+- visible progress
+- real game testing
+
+====================================================
+THE GOLDEN RULE
+====================================================
+
+At every step ask:
+
+"Can I test this in ETS2 today?"
+
+If the answer is no:
+the task is probably too abstract.
+
+====================================================
+PROJECT ROADMAP
+====================================================
+
+PHASE 1 — RAW INPUT DETECTION
+----------------------------------------------------
+
+Objective:
+Detect knob events reliably.
+
+Tasks:
+- enumerate Linux input devices
+- identify the AULA F75
+- read rotary encoder events
+- print clockwise/counterclockwise events
+- measure event timing
+
+Expected output:
+CW
+CW
+CCW
+CW
+
+Use:
+- evdev
+
+DO NOT:
+- build GUI yet
+- build config systems yet
+- add profiles yet
+
+====================================================
+PHASE 2 — STEERING STATE ENGINE
+----------------------------------------------------
+
+Objective:
+Convert discrete knob events into continuous steering state.
+
+Create:
+- steering angle
+- steering velocity
+
+IMPORTANT:
+The knob should NOT directly control angle.
+
+Instead:
+knob movement changes steering velocity.
+
+Implement:
+- inertia
+- damping
+- return-to-center
+
+Core variables:
+- steering_angle
+- steering_velocity
+
+Run:
+- fixed timestep loop
+
+Target:
+60Hz simulation update.
+
+====================================================
+PHASE 3 — VIRTUAL CONTROLLER OUTPUT
+----------------------------------------------------
+
+Objective:
+Expose a virtual joystick/gamepad axis.
+
+Use:
+- python-uinput
+OR
+- evdev uinput support
+
+The game should detect:
+"KnobWheel Virtual Controller"
+
+Map:
+- steering_angle → joystick X axis
+
+IMPORTANT:
+Test this FIRST in:
+- jstest-gtk
+- SDL gamepad tester
+- Steam controller tester
+
+Before testing inside ETS2.
+
+====================================================
+PHASE 4 — ETS2 INTEGRATION
+----------------------------------------------------
+
+Objective:
+Drive an actual truck.
+
+Tasks:
+- bind steering axis in ETS2
+- tune deadzones
+- tune smoothing
+- tune steering lock
+
+Success criteria:
+The truck can stay in a lane.
+
+THIS IS THE FIRST MAJOR MILESTONE.
+
+====================================================
+PHASE 5 — STEERING FEEL IMPROVEMENTS
+----------------------------------------------------
+
+Objective:
+Make it feel surprisingly usable.
+
+Add:
+- velocity-sensitive steering
+- acceleration curves
+- smoothing
+- non-linear response
+- steering friction
+- configurable lock-to-lock ratio
+
+This phase matters MORE than visuals.
+
+The "feel" is the product.
+
+====================================================
+PHASE 6 — GUI
+----------------------------------------------------
+
+ONLY after:
+- steering works
+- ETS2 works
+- input feels decent
+
+Then add:
+- wheel visualization
+- sliders
+- tuning UI
+- profiles
+
+Suggested:
+- PySide6
+
+====================================================
+CRITICAL ENGINEERING PITFALLS
+====================================================
+
+1. DO NOT MAP DIRECTLY TO KEYS
+----------------------------------------------------
+
+Bad:
+volume up → D
+volume down → A
+
+This creates:
+- digital steering
+- twitchy input
+- terrible realism
+
+Always use:
+continuous analog state.
+
+====================================================
+2. DO NOT TIE LOGIC TO THE AULA F75
+----------------------------------------------------
+
+Wrong:
+hardcoded keyboard IDs
+
+Correct:
+generic rotational input abstraction
+
+Future:
+any encoder should work.
+
+====================================================
+3. DO NOT OVERCOMPLICATE THREADING
+----------------------------------------------------
+
+Use:
+- asyncio
+OR
+- one simulation thread
+
+Avoid:
+- thread chaos
+- locks everywhere
+- race conditions
+
+====================================================
+4. DO NOT START WITH WINDOWS
+----------------------------------------------------
+
+Windows virtual controller support is much harder.
+
+Linux first.
+
+Once concept works:
+THEN think about Windows.
+
+====================================================
+5. DO NOT CHASE "REALISM" TOO EARLY
+----------------------------------------------------
+
+Real steering wheels have:
+- force feedback
+- resistance
+- huge rotation range
+
+You cannot replicate this fully.
+
+Aim for:
+"fun and surprisingly controllable."
+
+====================================================
+6. DO NOT BUILD A PERFECT PHYSICS ENGINE
+----------------------------------------------------
+
+This is input feel simulation,
+NOT vehicle simulation.
+
+Keep it simple.
+
+Simple + tuned well > complex + broken.
+
+====================================================
+7. AVOID PREMATURE MODULARITY
+----------------------------------------------------
+
+Early project structure should stay small.
+
+Avoid:
+- 30 files immediately
+- dependency injection
+- plugin architecture
+
+Start with:
+- maybe 3-5 files
+
+Refactor later.
+
+====================================================
+8. DO NOT BUILD UI BEFORE FEEL
+----------------------------------------------------
+
+A beautiful dashboard with bad steering is useless.
+
+The steering feel is everything.
+
+====================================================
+9. DO NOT TEST ONLY IN TERMINAL
+----------------------------------------------------
+
+A terminal demo is NOT success.
+
+Success is:
+- actual truck driving
+- actual cornering
+- actual lane keeping
+
+Games are the real test environment.
+
+====================================================
+10. EXPECT INPUT JITTER
+----------------------------------------------------
+
+Rotary encoders are noisy.
+
+Expect:
+- inconsistent timing
+- accidental duplicate events
+- weird burst behavior
+
+Implement:
+- debouncing
+- smoothing
+- filtering
+
+====================================================
+IMPORTANT TECHNICAL DIRECTION
+====================================================
+
+RECOMMENDED MVP STACK:
+
+Python:
+- evdev
+- asyncio
+- uinput
+
+Testing:
+- evtest
+- jstest-gtk
+
+Architecture:
+input.py
+physics.py
+output.py
+main.py
+
+Nothing more initially.
+
+====================================================
+STEERING MODEL GUIDANCE
+====================================================
+
+The most important formula:
+
+knob rotation
+    →
+steering velocity
+    →
+steering angle
+
+NOT:
+knob rotation
+    →
+direct steering angle
+
+Why:
+velocity-based steering creates:
+- momentum
+- smoothness
+- realism
+- controllability
+
+====================================================
+RECOMMENDED INITIAL TUNING
+====================================================
+
+Simulation tick:
+60Hz
+
+Auto-centering:
+gentle
+
+Damping:
+medium
+
+Steering lock:
+large
+
+Goal:
+slow truck-like steering.
+
+====================================================
+HOW TO THINK ABOUT THIS PROJECT
+====================================================
+
+This is NOT:
+"a keyboard remapper"
+
+This IS:
+"a virtual input device with steering simulation"
+
+That mindset changes architecture decisions.
+
+====================================================
+FIRST TASK TO IMPLEMENT
+====================================================
+
+Write a Python script that:
+1. lists Linux input devices
+2. detects knob events
+3. prints:
+   - direction
+   - timestamp
+   - click speed
+
+Nothing else.
+
+Do not move forward until this works perfectly.
+
+====================================================
+SECOND TASK
+====================================================
+
+Build a tiny steering simulation loop:
+- steering_angle
+- steering_velocity
+- damping
+- auto-centering
+
+Print angle continuously.
+
+Example:
+Steering: 0.42
+
+Do not create virtual joystick yet.
+
+====================================================
+THIRD TASK
+====================================================
+
+Create a virtual joystick device.
+
+Verify movement in:
+- jstest-gtk
+
+ONLY THEN test ETS2.
+
+====================================================
+MENTAL MODEL
+====================================================
+
+You are effectively building:
+
+Rotary Encoder
+    →
+Software Steering Rack
+    →
+Virtual Steering Column
+    →
+Game
+
+Treat the software as a fake steering mechanism.
+
+====================================================
+MOST IMPORTANT ADVICE
+====================================================
+
+Prioritize:
+1. latency
+2. smoothness
+3. controllability
+
+Far above:
+- architecture purity
+- UI beauty
+- code elegance
+
+If it FEELS good,
+people will forgive ugly code.
+
+If it FEELS bad,
+nothing else matters.
