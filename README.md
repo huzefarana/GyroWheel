@@ -97,3 +97,23 @@ sudo python3 main.py --centering 12.0 --damping 6.5 --accel 3.0
 - Higher `--centering` pulls the wheel back to center faster.
 - Higher `--damping` stops oscillations but makes the steering feel heavier/slower.
 - Higher `--accel` makes each click of the knob turn the wheel faster.
+I have updated both 
+
+physics.py
+ and 
+
+main.py
+ to implement the Direct Position Mapping model.
+
+Key Changes:
+Accumulated Clicks: Centering force and velocity have been removed. The virtual steering angle is directly proportional to how much you rotate the knob.
+Realistic 900+ / 1200 Degree Steering: Added a --clicks parameter (default: 80.0 clicks lock-to-lock, which is ~1200 degrees of rotation if your knob has 24 detents/rev).
+Lock Clamping: The accumulator stops growing at full lock (-40 and +40 clicks). Turning back immediately moves the wheel back to center.
+Smooth Interpolation: The wheel glides smoothly toward the target position using a configurable --smoothing speed (default: 15.0) to avoid stepping in the game axis.
+No Self-Centering: The wheel stays exactly where you leave it when you stop turning the knob.
+
+# 60 clicks lock-to-lock (~900 degrees)
+sudo .venv/bin/python main.py --clicks 60.0
+
+# 40 clicks lock-to-lock (~600 degrees)
+sudo .venv/bin/python main.py --clicks 40.0

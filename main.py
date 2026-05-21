@@ -5,8 +5,8 @@ import argparse
 import asyncio
 
 # Import modules from our project
-from input_detector import RotaryEvent, list_devices, check_grab_safety, parse_event, NonBlockingKeyReader, KEYBOARD_SUPPORT
-from physics import SteeringSimulation
+from input_detector import RotaryEvent, list_devices, check_grab_safety, parse_event
+from physics import SteeringSimulation, NonBlockingKeyReader, KEYBOARD_SUPPORT
 from output_controller import VirtualJoystick
 
 async def keyboard_input_task(queue: asyncio.Queue, shutdown_event: asyncio.Event):
@@ -26,10 +26,10 @@ async def keyboard_input_task(queue: asyncio.Queue, shutdown_event: asyncio.Even
                     break
                 elif key == 'a':
                     # Simulate counter-clockwise (left) impulse
-                    await queue.put(RotaryEvent(-1, time.monotonic()))
+                    await queue.put(RotaryEvent(-1, time.monotonic(), strength=4.0))
                 elif key == 'd':
                     # Simulate clockwise (right) impulse
-                    await queue.put(RotaryEvent(1, time.monotonic()))
+                    await queue.put(RotaryEvent(1, time.monotonic(), strength=4.0))
                 elif key == 'r':
                     # Recenter hotkey
                     await queue.put('RECENTER')
@@ -139,7 +139,8 @@ async def simulation_loop(sim: SteeringSimulation, joystick: VirtualJoystick | N
             sys.stdout.write(
                 f"\r{sim.get_ascii_visual()} | "
                 f"Angle: {sim.steering_angle:+.2f} | "
-                f"Vel: {sim.steering_velocity:+.2f} | "
+                f"Target: {sim.target_angle:+.2f} | "
+                f"Clicks: {sim.accumulated_clicks:+.1f} | "
                 f"uinput: {'Active' if joystick else 'Disabled'} "
             )
             sys.stdout.flush()
@@ -163,18 +164,16 @@ async def main():
     parser.add_argument("--no-uinput", action="store_true", help="Disable uinput virtual controller output (physics demo only)")
     parser.add_argument("--debounce", type=float, default=8.0, help="Debounce window in milliseconds (default: 8.0)")
     
-    # Physics tuning arguments
-    parser.add_argument("--centering", type=float, default=15.0, help="Centering spring force (default: 15.0)")
-    parser.add_argument("--damping", type=float, default=8.0, help="Damping / friction force (default: 8.0)")
-    parser.add_argument("--accel", type=float, default=4.0, help="Steering acceleration impulse (default: 4.0)")
+    # Direct mode settings
+    parser.add_argument("--clicks", type=float, default=80.0, help="Total clicks lock-to-lock (default: 80.0, approx 1200 degrees)")
+    parser.add_argument("--smoothing", type=float, default=15.0, help="Smoothing speed factor (default: 15.0)")
 
     args = parser.parse_args()
 
-    # Initialize Physics Engine
+    # Initialize Direct Position Mapping Engine
     sim = SteeringSimulation(
-        centering_force=args.centering,
-        damping=args.damping,
-        steering_acceleration=args.accel
+        lock_to_lock_clicks=args.clicks,
+        smoothing_speed=args.smoothing
     )
 
     # Initialize Virtual Joystick
@@ -190,6 +189,7 @@ async def main():
 
     # Determine input device path if not keyboard-only
     device_path = args.device
+    should_grab = args.grab
     if not args.keyboard and not device_path:
         devices = list_devices()
         if not devices:
@@ -209,7 +209,7 @@ async def main():
         print("\nAvailable Input Devices:")
         for idx, dev in enumerate(devices):
             prefix = "[*] " if idx == suggested_idx else "    "
-            print(f"{prefix}[{idx}] {dev.path} - {dev.name}")
+            print(f"{prefix}[{idx}] {dev.path} - {dev.name} ({dev.phys})")
 
         choice_prompt = "\nSelect device index"
         if suggested_idx is not None:
@@ -232,6 +232,13 @@ async def main():
 
         device_path = devices[selected_idx].path
 
+        # Prompt for grab if not explicitly requested on command line
+        if not args.grab:
+            grab_input = input("Grab device exclusively? (Prevents keys from triggering system volume changes) [y/N]: ").strip().lower()
+            should_grab = (grab_input == 'y')
+        else:
+            should_grab = True
+
     # Setup Async Tasks
     queue = asyncio.Queue()
     shutdown_event = asyncio.Event()
@@ -245,7 +252,7 @@ async def main():
     # Device polling task (if not in keyboard-only mode)
     if device_path:
         tasks.append(asyncio.create_task(
-            evdev_input_task(device_path, args.grab, queue, shutdown_event, args.debounce)
+            evdev_input_task(device_path, should_grab, queue, shutdown_event, args.debounce)
         ))
 
     # Physics & output loop task
