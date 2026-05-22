@@ -118,7 +118,7 @@ jstest-gtk
 evtest
 ```
 
-Look for **KnobWheel Gamepad** and confirm the X axis moves when you turn the knob.
+Look for **KnobWheel Racing Wheel** and confirm the steering axis moves when you turn the knob.
 
 ### 4. Bind in your game (ETS2)
 
@@ -127,24 +127,18 @@ Look for **KnobWheel Gamepad** and confirm the X axis moves when you turn the kn
 ```text
 1. Start KnobWheel first (leave the terminal open)
 2. Then launch Steam / ETS2  —  or fully restart Steam if it was already open
-3. Bind steering manually in-game
+3. Open ETS2 -> Options -> Controls
 ```
 
-In ETS2:
+KnobWheel now advertises a **racing-wheel layout** (`ABS_WHEEL` axis + idle gas/brake pedals + wheel buttons) rather than a generic gamepad. ETS2 classifies axes by code — `ABS_X` is treated as a thumbstick and rejected for steering, but `ABS_WHEEL` is auto-bound. With the racing-wheel profile, ETS2 should pick up the steering axis on first launch.
 
-1. Use the **native Linux** build (Properties → Compatibility → **do not** force Proton).
-2. Open **Options → Controls → Steering**.
-3. Click **Steer left** or **Steer right**, then turn the knob. Bind **joystick axis X**.
-4. Ignore “no steering wheel detected” — that message refers to force-feedback wheels, not generic gamepads.
-5. Tune in-game deadzone/sensitivity and KnobWheel `--clicks` / `--smoothing` as needed.
+**Native Linux ETS2 (recommended):** ETS2 → **Properties → Compatibility** → **uncheck** “Force the use of a specific Steam Play compatibility tool”. Confirm `bin/linux_x64/` exists in local files.
 
-If ETS2 still ignores the device, KnobWheel prints a `SDL_JOYSTICK_DEVICE=...` hint at startup — use that when launching:
+If ETS2 still doesn't bind automatically, in **Options → Controls** click the steering axis row and turn the knob.
 
-```bash
-SDL_JOYSTICK_DEVICE=/dev/input/jsN steam -applaunch 227300
-```
+If launching from a Flatpak Steam install: the Flatpak's `devices=all` + `/dev/input` filesystem share are enough for ETS2 to see the device. The warning `Not sharing "/dev/input"` printed by `flatpak run --command=...` is misleading — `event*` and `js*` nodes still reach the sandbox via `devices=all`.
 
-**Pick the right input device:** when prompted, select your keyboard’s **Consumer Control** node (not “KnobWheel Gamepad” — that is the virtual output).
+**Pick the right input device:** when prompted, select your keyboard's **Consumer Control** node (not "KnobWheel Racing Wheel" — that's KnobWheel's own output).
 
 **Success looks like:** keeping a truck in a lane at speed—not just seeing axis movement in a test tool.
 
@@ -202,9 +196,10 @@ The golden rule during development: *Can I test this in ETS2 today?* If not, the
 
 | Problem | Fix |
 |---------|-----|
-| ETS2 only sees keyboard/mouse | Start KnobWheel **before** Steam/ETS2, or restart Steam after KnobWheel is running |
+| ETS2 logs "No steering axis found" | Update to the racing-wheel profile (current `output_controller.py` uses `ABS_WHEEL`) and restart Steam after KnobWheel is running |
+| Steam says controller connected but ETS2 still ignores it | Restart Steam fully after KnobWheel starts — Steam does not hotplug uinput devices |
 | Wrong device suggested at startup | Pick **Consumer Control** for your keyboard — never the KnobWheel virtual device |
-| `jstest-gtk` works but game does not | Native Linux build (no Proton); bind axis X manually under Controls → Steering |
+| Flatpak Steam test prints `Not sharing "/dev/input"` | That warning is cosmetic; `devices=all` still passes device nodes through. Check `flatpak run --command=ls com.valvesoftware.Steam /dev/input/` to confirm `js0` is visible |
 | Volume changes while playing | Restart with grab enabled (`y` when prompted) on the Consumer Control device |
 | Axis too sensitive | Increase `--clicks` (e.g. `--clicks 100`) |
 

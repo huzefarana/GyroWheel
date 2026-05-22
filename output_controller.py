@@ -1,12 +1,20 @@
 #!/usr/bin/env python3
+"""Virtual racing-wheel device exposed via Linux uinput.
+
+KnobWheel advertises a steering-wheel-class device (ABS_WHEEL + GAS + BRAKE + HAT)
+rather than a gamepad, because games like ETS2 classify devices by their axis set:
+gamepads with ABS_X/Y are treated as thumbsticks and rejected for steering, while
+ABS_WHEEL is the canonical steering axis evdev defines for racing wheels.
+"""
 import sys
 import time
 import evdev
 from evdev import ecodes, AbsInfo
 
-# Generic USB gamepad IDs — helps SDL and games classify the device as a controller.
-VENDOR_ID = 0x0079
-PRODUCT_ID = 0x0006
+# Generic USB IDs — not spoofing a real wheel, but enough that SDL/games treat it
+# as a real USB device rather than something unidentifiable.
+VENDOR_ID = 0x046d   # Logitech vendor space; helps games' built-in wheel heuristics
+PRODUCT_ID = 0xc294  # generic placeholder in Logitech's wheel range
 
 
 def find_joystick_path(event_path: str, device_name: str | None = None) -> str | None:
@@ -29,41 +37,55 @@ def find_joystick_path(event_path: str, device_name: str | None = None) -> str |
     return None
 
 
+def _wheel_axis() -> AbsInfo:
+    return AbsInfo(value=0, min=-32768, max=32767, fuzz=0, flat=128, resolution=0)
+
+
+def _pedal_axis() -> AbsInfo:
+    return AbsInfo(value=0, min=0, max=255, fuzz=0, flat=0, resolution=0)
+
+
+def _hat_axis() -> AbsInfo:
+    return AbsInfo(value=0, min=-1, max=1, fuzz=0, flat=0, resolution=0)
+
+
 class VirtualJoystick:
     """
-    Handles creating and writing to a virtual Linux gamepad using uinput.
-    Exposes ABS_X as the steering axis with a standard gamepad capability set
-    so games and SDL are more likely to detect it than a bare 1-axis device.
+    Virtual steering wheel device.
+
+    Layout matches a typical force-feedback wheel as evdev sees it:
+      - ABS_WHEEL  : steering (driven by the knob)
+      - ABS_GAS    : throttle pedal (idle, present so games classify it as a wheel)
+      - ABS_BRAKE  : brake pedal   (idle)
+      - ABS_HAT0X / ABS_HAT0Y : dpad
+      - BTN_TRIGGER, BTN_THUMB, BTN_THUMB2, BTN_TOP, BTN_TOP2, BTN_PINKIE,
+        BTN_BASE..BTN_BASE4 : wheel buttons (idle)
     """
-    def __init__(self, name="KnobWheel Gamepad"):
+    def __init__(self, name="KnobWheel Racing Wheel"):
         self.name = name
         self.ui = None
         self.event_path = None
         self.js_path = None
 
-        axis_info = AbsInfo(
-            value=0,
-            min=-32768,
-            max=32767,
-            fuzz=0,
-            flat=128,
-            resolution=0,
-        )
-
         capabilities = {
             ecodes.EV_KEY: [
-                ecodes.BTN_SOUTH,
-                ecodes.BTN_EAST,
-                ecodes.BTN_WEST,
-                ecodes.BTN_NORTH,
-                ecodes.BTN_TL,
-                ecodes.BTN_TR,
-                ecodes.BTN_SELECT,
-                ecodes.BTN_START,
+                ecodes.BTN_TRIGGER,
+                ecodes.BTN_THUMB,
+                ecodes.BTN_THUMB2,
+                ecodes.BTN_TOP,
+                ecodes.BTN_TOP2,
+                ecodes.BTN_PINKIE,
+                ecodes.BTN_BASE,
+                ecodes.BTN_BASE2,
+                ecodes.BTN_BASE3,
+                ecodes.BTN_BASE4,
             ],
             ecodes.EV_ABS: [
-                (ecodes.ABS_X, axis_info),
-                (ecodes.ABS_Y, axis_info),
+                (ecodes.ABS_WHEEL, _wheel_axis()),
+                (ecodes.ABS_GAS, _pedal_axis()),
+                (ecodes.ABS_BRAKE, _pedal_axis()),
+                (ecodes.ABS_HAT0X, _hat_axis()),
+                (ecodes.ABS_HAT0Y, _hat_axis()),
             ],
         }
 
@@ -82,7 +104,7 @@ class VirtualJoystick:
                 self.event_path = self.ui.device.path
                 self.js_path = find_joystick_path(self.event_path, self.name)
 
-            print(f"Successfully created virtual gamepad: '{self.name}'")
+            print(f"Successfully created virtual racing wheel: '{self.name}'")
             if self.event_path:
                 print(f"  Event node: {self.event_path}")
             if self.js_path:
@@ -94,20 +116,23 @@ class VirtualJoystick:
             print("Please run with 'sudo' or configure udev rules for /dev/uinput.", file=sys.stderr)
             raise
         except Exception as e:
-            print(f"Failed to create virtual gamepad: {e}", file=sys.stderr)
+            print(f"Failed to create virtual racing wheel: {e}", file=sys.stderr)
             raise
 
     def _sync_initial_state(self):
         """Center all axes so listeners see a valid idle state."""
         if self.ui is None:
             return
-        self.ui.write(ecodes.EV_ABS, ecodes.ABS_X, 0)
-        self.ui.write(ecodes.EV_ABS, ecodes.ABS_Y, 0)
+        self.ui.write(ecodes.EV_ABS, ecodes.ABS_WHEEL, 0)
+        self.ui.write(ecodes.EV_ABS, ecodes.ABS_GAS, 0)
+        self.ui.write(ecodes.EV_ABS, ecodes.ABS_BRAKE, 0)
+        self.ui.write(ecodes.EV_ABS, ecodes.ABS_HAT0X, 0)
+        self.ui.write(ecodes.EV_ABS, ecodes.ABS_HAT0Y, 0)
         self.ui.syn()
 
     def update_steering(self, normalized_val: float):
         """
-        Update the ABS_X steering axis.
+        Update the steering axis.
         Input: normalized value in range [-1.0, 1.0]
         """
         if self.ui is None:
@@ -120,14 +145,14 @@ class VirtualJoystick:
         else:
             integer_val = int(val * 32767)
 
-        self.ui.write(ecodes.EV_ABS, ecodes.ABS_X, integer_val)
+        self.ui.write(ecodes.EV_ABS, ecodes.ABS_WHEEL, integer_val)
         self.ui.syn()
 
     def close(self):
         """Release the uinput device."""
         if self.ui is not None:
             self.ui.close()
-            print("Closed virtual gamepad.")
+            print("Closed virtual racing wheel.")
             self.ui = None
 
 
@@ -140,8 +165,9 @@ def print_game_launch_hints(joystick: VirtualJoystick | None):
     print("  1. Keep KnobWheel running (this terminal)")
     print("  2. Start Steam / ETS2 AFTER KnobWheel is active")
     print("     (or fully restart Steam if it was already open)")
-    print("  3. In ETS2: Options → Controls → bind Steering axis X")
-    print("     Ignore 'no steering wheel' — bind the joystick axis manually.")
+    print("  3. Prefer the NATIVE LINUX build of ETS2 (Compatibility -> do NOT force Proton).")
+    print("  4. In ETS2: Options -> Controls. The 'Steering' axis should auto-bind.")
+    print("     If not, click 'Steer left' or the steering axis and turn the knob.")
     if joystick.js_path:
         print(f"\nIf ETS2 still ignores it, try launching with:")
         print(f"  SDL_JOYSTICK_DEVICE={joystick.js_path} steam -applaunch 227300")
@@ -154,7 +180,6 @@ if __name__ == "__main__":
         controller = VirtualJoystick()
         print("Device is registered. Verify with 'jstest-gtk' or 'evtest'.")
 
-        import time
         print("Simulating steering movement...")
         for val in [0.0, -0.5, -1.0, 0.0, 0.5, 1.0, 0.0]:
             print(f"Setting axis value to: {val:+.2f}")
