@@ -5,9 +5,16 @@ import argparse
 import asyncio
 
 # Import modules from our project
-from input_detector import RotaryEvent, list_devices, check_grab_safety, parse_event
+from input_detector import (
+    RotaryEvent,
+    list_devices,
+    check_grab_safety,
+    parse_event,
+    suggest_knob_device,
+    is_virtual_output_device,
+)
 from physics import SteeringSimulation, NonBlockingKeyReader, KEYBOARD_SUPPORT
-from output_controller import VirtualJoystick
+from output_controller import VirtualJoystick, print_game_launch_hints
 
 async def keyboard_input_task(queue: asyncio.Queue, shutdown_event: asyncio.Event):
     """Monitor keyboard input for fallback controls and hotkeys."""
@@ -176,44 +183,26 @@ async def main():
         smoothing_speed=args.smoothing
     )
 
-    # Initialize Virtual Joystick
-    joystick = None
-    if not args.no_uinput:
-        try:
-            joystick = VirtualJoystick()
-        except PermissionError:
-            print("\nCritical: Please run with sudo to enable uinput virtual controller, or use --no-uinput for a CLI simulation demo.", file=sys.stderr)
-            sys.exit(1)
-        except Exception:
-            sys.exit(1)
-
-    # Determine input device path if not keyboard-only
+    # Pick physical input device before creating the virtual gamepad (keeps the list clean)
     device_path = args.device
     should_grab = args.grab
     if not args.keyboard and not device_path:
         devices = list_devices()
         if not devices:
             print("\nError: No input devices found. Try running with 'sudo' or check permissions.", file=sys.stderr)
-            if joystick:
-                joystick.close()
             sys.exit(1)
-        
-        # Look for suggested keyboard/consumer control device
-        suggested_idx = None
-        for idx, dev in enumerate(devices):
-            name_lower = dev.name.lower()
-            if "aula" in name_lower or "consumer" in name_lower or "control" in name_lower or "knob" in name_lower:
-                suggested_idx = idx
-                break
+
+        suggested_idx = suggest_knob_device(devices)
 
         print("\nAvailable Input Devices:")
         for idx, dev in enumerate(devices):
-            prefix = "[*] " if idx == suggested_idx else "    "
-            print(f"{prefix}[{idx}] {dev.path} - {dev.name} ({dev.phys})")
+            marker = "[*] " if idx == suggested_idx else "    "
+            skip = " (virtual — do not select)" if is_virtual_output_device(dev) else ""
+            print(f"{marker}[{idx}] {dev.path} - {dev.name} ({dev.phys}){skip}")
 
         choice_prompt = "\nSelect device index"
         if suggested_idx is not None:
-            choice_prompt += f" (suggested default: {suggested_idx})"
+            choice_prompt += f" (suggested: {suggested_idx})"
         choice_prompt += ": "
 
         choice = input(choice_prompt).strip()
@@ -226,18 +215,32 @@ async def main():
                     raise ValueError()
             except ValueError:
                 print("Invalid selection.", file=sys.stderr)
-                if joystick:
-                    joystick.close()
                 sys.exit(1)
+
+        if is_virtual_output_device(devices[selected_idx]):
+            print("\nError: That is KnobWheel's own virtual output device, not your keyboard knob.", file=sys.stderr)
+            print("Pick the 'Consumer Control' device for your keyboard instead.", file=sys.stderr)
+            sys.exit(1)
 
         device_path = devices[selected_idx].path
 
-        # Prompt for grab if not explicitly requested on command line
         if not args.grab:
             grab_input = input("Grab device exclusively? (Prevents keys from triggering system volume changes) [y/N]: ").strip().lower()
             should_grab = (grab_input == 'y')
         else:
             should_grab = True
+
+    # Create virtual gamepad after input selection so it does not pollute the device list
+    joystick = None
+    if not args.no_uinput:
+        try:
+            joystick = VirtualJoystick()
+            print_game_launch_hints(joystick)
+        except PermissionError:
+            print("\nCritical: Please run with sudo to enable uinput virtual controller, or use --no-uinput for a CLI simulation demo.", file=sys.stderr)
+            sys.exit(1)
+        except Exception:
+            sys.exit(1)
 
     # Setup Async Tasks
     queue = asyncio.Queue()

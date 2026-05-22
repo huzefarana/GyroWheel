@@ -24,6 +24,46 @@ def list_devices():
         print(f"Error listing input devices: {e}", file=sys.stderr)
         return []
 
+
+def is_virtual_output_device(device) -> bool:
+    """True for uinput/KnobWheel devices — not valid knob input sources."""
+    phys = (device.phys or "").lower()
+    name = (device.name or "").lower()
+    if "py-evdev-uinput" in phys or "uinput" in phys:
+        return True
+    if "knobwheel" in name:
+        return True
+    return False
+
+
+def suggest_knob_device(devices) -> int | None:
+    """Return the index of the best physical knob device, if one can be guessed."""
+    best_score = 0
+    best_idx = None
+    for idx, dev in enumerate(devices):
+        if is_virtual_output_device(dev):
+            continue
+        name_lower = dev.name.lower()
+        score = 0
+        if "consumer control" in name_lower:
+            score += 100
+        elif "consumer" in name_lower:
+            score += 80
+        if "knob" in name_lower or "dial" in name_lower:
+            score += 90
+        if "aula" in name_lower:
+            score += 70
+        if "volume" in name_lower:
+            score += 50
+        if "keyboard" in name_lower and "consumer" not in name_lower:
+            score -= 50
+        if "mouse" in name_lower:
+            score -= 50
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+    return best_idx
+
 def check_grab_safety(device) -> bool:
     """
     Check if a device is safe to grab exclusively.
@@ -150,13 +190,7 @@ if __name__ == "__main__":
     for idx, dev in enumerate(devices):
         print(f"[{idx}] {dev.path} - {dev.name} ({dev.phys})")
 
-    # Try to auto-select a device containing typical knob terms
-    suggested_idx = None
-    for idx, dev in enumerate(devices):
-        name_lower = dev.name.lower()
-        if "aula" in name_lower or "consumer" in name_lower or "control" in name_lower or "knob" in name_lower:
-            suggested_idx = idx
-            break
+    suggested_idx = suggest_knob_device(devices)
 
     prompt = f"\nSelect device index [0-{len(devices)-1}]"
     if suggested_idx is not None:

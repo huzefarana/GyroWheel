@@ -20,7 +20,7 @@ Virtual joystick X axis (uinput)
 Game (ETS2, etc.)
 ```
 
-KnobWheel is **not** a key remapper. It does not send `A`/`D` or volume keys to the game. It creates a **virtual input device** (`KnobWheel Virtual Controller`) with a continuous analog axis—closer to a software steering rack than a macro.
+KnobWheel is **not** a key remapper. It does not send `A`/`D` or volume keys to the game. It creates a **virtual gamepad** (`KnobWheel Gamepad`) with a continuous analog X axis—closer to a software steering rack than a macro.
 
 The steering model uses **direct position mapping**: each detent adds to an accumulated click count (with lock-to-lock limits), the wheel stays where you leave it (no auto-centering), and output is smoothed so the in-game axis does not step harshly.
 
@@ -118,16 +118,33 @@ jstest-gtk
 evtest
 ```
 
-Look for **KnobWheel Virtual Controller** and confirm the X axis moves when you turn the knob.
+Look for **KnobWheel Gamepad** and confirm the X axis moves when you turn the knob.
 
-### 4. Bind in your game
+### 4. Bind in your game (ETS2)
 
-In ETS2 (or similar):
+**Critical — startup order:** Steam does **not** hotplug uinput devices. If Steam was already running before you started KnobWheel, the game may only see keyboard and mouse.
 
-1. Open **Settings → Controls → Steering**.
-2. Assign steering to **KnobWheel Virtual Controller** (joystick X axis).
-3. Tune in-game deadzone and sensitivity if needed.
-4. Adjust `--clicks` and `--smoothing` in KnobWheel until lane keeping feels right.
+```text
+1. Start KnobWheel first (leave the terminal open)
+2. Then launch Steam / ETS2  —  or fully restart Steam if it was already open
+3. Bind steering manually in-game
+```
+
+In ETS2:
+
+1. Use the **native Linux** build (Properties → Compatibility → **do not** force Proton).
+2. Open **Options → Controls → Steering**.
+3. Click **Steer left** or **Steer right**, then turn the knob. Bind **joystick axis X**.
+4. Ignore “no steering wheel detected” — that message refers to force-feedback wheels, not generic gamepads.
+5. Tune in-game deadzone/sensitivity and KnobWheel `--clicks` / `--smoothing` as needed.
+
+If ETS2 still ignores the device, KnobWheel prints a `SDL_JOYSTICK_DEVICE=...` hint at startup — use that when launching:
+
+```bash
+SDL_JOYSTICK_DEVICE=/dev/input/jsN steam -applaunch 227300
+```
+
+**Pick the right input device:** when prompted, select your keyboard’s **Consumer Control** node (not “KnobWheel Gamepad” — that is the virtual output).
 
 **Success looks like:** keeping a truck in a lane at speed—not just seeing axis movement in a test tool.
 
@@ -180,6 +197,16 @@ The project was built in vertical slices (see `plan.md`):
 5. **Tuning** — drivable lane keeping  
 
 The golden rule during development: *Can I test this in ETS2 today?* If not, the task was probably too abstract.
+
+## Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| ETS2 only sees keyboard/mouse | Start KnobWheel **before** Steam/ETS2, or restart Steam after KnobWheel is running |
+| Wrong device suggested at startup | Pick **Consumer Control** for your keyboard — never the KnobWheel virtual device |
+| `jstest-gtk` works but game does not | Native Linux build (no Proton); bind axis X manually under Controls → Steering |
+| Volume changes while playing | Restart with grab enabled (`y` when prompted) on the Consumer Control device |
+| Axis too sensitive | Increase `--clicks` (e.g. `--clicks 100`) |
 
 ## Safety notes
 
