@@ -1,0 +1,9 @@
+# KnobWheel Windows dependencies
+# Run: pip install -r requirements_windows.txt
+
+# Virtual Xbox controller via ViGEmBus
+# Also requires the ViGEmBus driver: https://github.com/nefarius/ViGEmBus/releases
+vgamepad
+
+# WebSocket server (phone <-> PC communication)
+websockets

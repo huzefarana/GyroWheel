@@ -1,241 +1,180 @@
 # KnobWheel
 
-Turn a mechanical keyboard volume knob into a virtual analog steering wheel for driving games on Linux.
+Steer in driving games by **tilting your Android phone**. KnobWheel reads your phone's motion sensor in the browser, streams the tilt to your PC over local WiFi, and feeds a virtual Xbox controller that games like **Euro Truck Simulator 2** can bind as steering, throttle, and brake.
 
-KnobWheel reads rotary encoder events from your keyboard (volume up/down, dial axes, and similar), maps them to a smooth steering position, and exposes a virtual joystick axis that games like **Euro Truck Simulator 2** can bind as steering input.
+No app to install on the phone — it is just a web page. No special hardware — your phone is the wheel.
 
-> **Origin story:** This started with an [Aula F75](https://www.aula.com/) keyboard and a simple idea: *what if the volume knob was a steering wheel?* The project is intentionally experimental—feel and controllability matter more than polish.
+> **Where the name comes from:** KnobWheel began as an experiment in turning a mechanical keyboard's volume knob into a steering wheel. It has since grown up — the knob is gone and your phone's gyroscope is the wheel — but the name stuck.
 
 ## How it works
 
 ```
-Rotary encoder (keyboard knob)
-        ↓
-Event normalization (RotaryEvent)
-        ↓
-Steering simulation (accumulated clicks → angle)
-        ↓
-Virtual joystick X axis (uinput)
-        ↓
-Game (ETS2, etc.)
+Android phone (browser web app)
+  • reads the gravity vector (devicemotion)
+  • converts it to tilt angles, sends ~60×/sec
+        │   WebSocket   { beta, gamma, alpha }
+        ▼
+gyro_server.py        receives packets, keeps the latest tilt (GyroState),
+        │             converts tilt → steering / throttle / brake values
+        ▼
+physics.py            smooths the raw steering target into a wheel position
+        │
+        ▼
+output_controller_windows.py   virtual Xbox 360 pad (ViGEmBus / vgamepad)
+        │             steering → left stick X, throttle → RT, brake → LT
+        ▼
+Game (ETS2 / ATS / any XInput game)
 ```
 
-KnobWheel is **not** a key remapper. It does not send `A`/`D` or volume keys to the game. It creates a **virtual gamepad** (`KnobWheel Gamepad`) with a continuous analog X axis—closer to a software steering rack than a macro.
+`phone_server.py` is what the phone first talks to: it serves the controller web page over HTTP on port `WS_PORT + 1` (default `8766`), so the phone only needs one URL. `main_windows.py` wires the whole chain together in a ~60 Hz async loop.
 
-The steering model uses **direct position mapping**: each detent adds to an accumulated click count (with lock-to-lock limits), the wheel stays where you leave it (no auto-centering), and output is smoothed so the in-game axis does not step harshly.
+KnobWheel creates a **virtual gamepad**, not key presses — games see a continuous analog axis, closer to a software steering rack than a macro.
 
-## Features
+| File | Role |
+|------|------|
+| `phone_server.py` | Serves the phone web app (HTML/JS gravity reader) over HTTP |
+| `gyro_server.py` | WebSocket server; turns tilt angles into steering / throttle / brake |
+| `physics.py` | Smooths the steering position |
+| `output_controller_windows.py` | Virtual Xbox 360 controller via `vgamepad` |
+| `main_windows.py` | 60 Hz loop tying input → physics → output together |
 
-- Detects knob rotation from Linux `evdev` devices (volume keys, `REL_DIAL`, `REL_WHEEL`, etc.)
-- Debouncing for noisy encoders
-- Safe optional device grab (warns if grabbing might lock your main keyboard)
-- Virtual joystick via `uinput` for game binding
-- Configurable lock-to-lock click count and smoothing
-- Keyboard fallback (`A` / `D` / `R` / `Q`) for testing without hardware
-- Standalone tools to verify input, physics, and virtual device output
+## The math behind it
+
+Four small steps turn a phone wobble into a clean steering axis.
+
+**1. Gravity → tilt angle.**
+The phone always feels gravity pulling "down". By measuring how that pull is split across the phone's three axes (`gx`, `gy`, `gz`), we can work out how far it is tilted. We use `atan2`, a function that gives an angle from two side lengths:
+
+```
+steering tilt = atan2(gy, hypot(gx, gz))   // rolling the phone left/right
+pedal tilt    = atan2(gx, hypot(gy, gz))   // leaning it forward/back
+```
+
+We deliberately use the gravity vector instead of the phone's built-in orientation angles, because those orientation angles "flip" to wild values at certain tilts (a problem called *gimbal lock*). Gravity-based angles stay smooth, and the two axes stay independent — so pressing the gas no longer yanks the steering sideways.
+
+**2. Smooth out the shakes (low-pass filter).**
+Raw sensor readings jitter. We blend each new reading with the previous one instead of trusting it fully:
+
+```
+filtered = filtered + LP × (raw − filtered)
+```
+
+`LP` near `0` is very smooth but laggy; near `1` is instant but jumpy. We use about `0.65`.
+
+**3. Deadzone + full-lock scaling.**
+A tilt angle becomes a tidy control value — `[-1, 1]` for steering, `[0, 1]` for pedals:
+
+```
+value = clamp( (|angle| − deadzone) / (maxTilt − deadzone), 0, 1 ) × direction
+```
+
+- **deadzone** (≈5°): ignore tiny tilts so the wheel does not drift while you hold still.
+- **maxTilt** (≈45° steering, ≈30° pedals): the angle at which you reach full lock / full pedal.
+
+**4. Ease into position (steering smoothing).**
+The wheel does not snap to the target; it glides toward it a little each frame:
+
+```
+angle += (target − angle) × smoothing × dt
+```
+
+A higher `smoothing` value reaches the target faster and feels more direct (we use `10`). This is exactly what the `--smoothing` flag tunes.
+
+Finally the `[-1, 1]` / `[0, 1]` values are scaled to the controller's raw ranges: steering → left-stick X (`−32768…32767`), throttle → right trigger and brake → left trigger (`0…255`).
 
 ## Requirements
 
-- **OS:** Linux (Ubuntu and similar distros tested conceptually; Windows is out of scope for now)
-- **Python:** 3.10+ recommended
-- **Permissions:** Read access to `/dev/input/event*`; write access to `/dev/uinput` for the virtual controller
-- **Optional tools:** `evtest`, `jstest-gtk` (for verifying devices)
+- **OS:** Windows 10 / 11
+- **Python:** 3.10+
+- **ViGEmBus driver:** [install once](https://github.com/nefarius/ViGEmBus/releases) — this provides the virtual Xbox controller
+- **Phone:** Android with a browser, on the **same WiFi** as the PC, with motion sensors enabled
 
-## Fresh machine setup
+## Setup
 
-After cloning on a new Linux machine, run these steps from the project directory:
+```powershell
+# 1. Install dependencies (vgamepad + websockets)
+pip install -r requirements_windows.txt
 
-```bash
-git clone https://github.com/Shahzaibalikhawaja/KnobWheel.git
-cd KnobWheel
+# 2. Install the ViGEmBus driver (one time)
+#    https://github.com/nefarius/ViGEmBus/releases
 
-# 1. Create a virtual environment
-python3 -m venv .venv
-
-# 2. Activate it (needed for pip install)
-source .venv/bin/activate
-
-# 3. Install dependencies
-pip install -r requirements.txt
-
-# 4. Run KnobWheel (use the venv Python with sudo — activation does not apply to sudo)
-sudo .venv/bin/python main.py
+# 3. Run KnobWheel
+python main_windows.py
 ```
 
-Use `sudo .venv/bin/python` for other scripts that need input/uinput access as well (for example `input_detector.py`).
-
-On Debian/Ubuntu, install helpers if needed:
-
-```bash
-sudo apt install python3-venv evtest jstest-gtk
-```
-
-### Permissions (recommended)
-
-Running with `sudo` works for a quick test, but for daily use add your user to the `input` and `uinput` groups (then log out and back in):
-
-```bash
-sudo usermod -aG input,uinput "$USER"
-```
-
-You still need read access to the specific event node your knob appears on; use `input_detector.py` to find the right `/dev/input/eventN` path.
+On launch the terminal prints a URL like `http://192.168.x.x:8766`. Open it in your phone's browser (same WiFi). Tap **Enable Gyroscope** if prompted (iOS asks; Android usually does not).
 
 ## Quick start
 
-### 1. Find your knob device
+1. Start `python main_windows.py` on the PC.
+2. Open the printed URL on your phone and grant motion access.
+3. Hold the phone in **landscape** (screen facing you):
+   - tilt **left / right** → steer
+   - lean **forward** → throttle
+   - lean **backward** → brake
+4. In your game's controller settings, bind:
+   - **Steering** → Left Stick X
+   - **Throttle** → Right Trigger
+   - **Brake** → Left Trigger
+5. Launch the game **after** KnobWheel is already running so it detects the controller.
 
-```bash
-sudo .venv/bin/python input_detector.py
-```
-
-Select the device that reports events when you turn the knob (often named *Consumer Control* or similar—not always the main keyboard node).
-
-### 2. Run KnobWheel
-
-```bash
-sudo .venv/bin/python main.py
-```
-
-Or point at a device explicitly:
-
-```bash
-sudo .venv/bin/python main.py --device /dev/input/event10
-```
-
-**Demo without sudo** (physics + keyboard only, no virtual joystick):
-
-```bash
-.venv/bin/python main.py --keyboard --no-uinput
-```
-
-### 3. Verify the virtual controller
-
-In another terminal:
-
-```bash
-jstest-gtk
-# or
-evtest
-```
-
-Look for **KnobWheel Racing Wheel** and confirm the steering axis moves when you turn the knob.
-
-### 4. Bind in your game (ETS2)
-
-**Critical — startup order:** Steam does **not** hotplug uinput devices. If Steam was already running before you started KnobWheel, the game may only see keyboard and mouse.
-
-```text
-1. Start KnobWheel first (leave the terminal open)
-2. Then launch Steam / ETS2  —  or fully restart Steam if it was already open
-3. Open ETS2 -> Options -> Controls
-```
-
-KnobWheel now advertises a **racing-wheel layout** (`ABS_WHEEL` axis + idle gas/brake pedals + wheel buttons) rather than a generic gamepad. ETS2 classifies axes by code — `ABS_X` is treated as a thumbstick and rejected for steering, but `ABS_WHEEL` is auto-bound. With the racing-wheel profile, ETS2 should pick up the steering axis on first launch.
-
-**Native Linux ETS2 (recommended):** ETS2 → **Properties → Compatibility** → **uncheck** “Force the use of a specific Steam Play compatibility tool”. Confirm `bin/linux_x64/` exists in local files.
-
-If ETS2 still doesn't bind automatically, in **Options → Controls** click the steering axis row and turn the knob.
-
-If launching from a Flatpak Steam install: the Flatpak's `devices=all` + `/dev/input` filesystem share are enough for ETS2 to see the device. The warning `Not sharing "/dev/input"` printed by `flatpak run --command=...` is misleading — `event*` and `js*` nodes still reach the sandbox via `devices=all`.
-
-**Pick the right input device:** when prompted, select your keyboard's **Consumer Control** node (not "KnobWheel Racing Wheel" — that's KnobWheel's own output).
-
-**Success looks like:** keeping a truck in a lane at speed—not just seeing axis movement in a test tool.
+**Display-only test (no driver needed):** `python main_windows.py --no-controller` prints steering / throttle / brake in the terminal without creating a virtual pad — handy for checking your phone connection.
 
 ## Configuration
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--device` | *(interactive)* | Input device path |
-| `--clicks` | `80.0` | Detents from full left lock to full right lock (~1200° with 24 detents/rev) |
-| `--smoothing` | `15.0` | How quickly the reported angle catches up to the target |
-| `--debounce` | `8.0` | Minimum milliseconds between accepted knob events |
-| `--grab` | off | Exclusive grab (see warning below) |
-| `--keyboard` | off | Use `A`/`D` instead of hardware knob |
-| `--no-uinput` | off | Skip virtual joystick (terminal demo) |
+| `--port` | `8765` | WebSocket port. The phone web app is served on `port + 1`. |
+| `--deadzone` | `5.0` | Tilt (degrees) around center that is ignored, so the wheel does not drift. |
+| `--max-tilt` | `45.0` | Tilt angle that equals full steering lock. |
+| `--throttle-tilt` | `30.0` | Forward / back lean angle that equals full throttle / brake. |
+| `--smoothing` | `15.0` | How quickly the wheel catches up to your tilt (higher = snappier). |
+| `--no-controller` | off | Skip the virtual controller (terminal display only). |
 
 Examples:
 
-```bash
-# ~900° lock-to-lock (60 detents)
-sudo .venv/bin/python main.py --clicks 60
+```powershell
+# Snappier steering
+python main_windows.py --smoothing 14
 
-# ~600° lock-to-lock (40 detents)
-sudo .venv/bin/python main.py --clicks 40
-
-# Heavier smoothing
-sudo .venv/bin/python main.py --smoothing 10
+# Bigger deadzone, gentler full-lock
+python main_windows.py --deadzone 8 --max-tilt 55
 ```
-
-**Hotkeys** (when terminal keyboard support is available): `A` / `D` steer, `R` re-center, `Q` quit.
-
-## Project layout
-
-| File | Role |
-|------|------|
-| `input_detector.py` | List devices, parse knob events, debounce, grab safety |
-| `physics.py` | Steering simulation and ASCII debug overlay |
-| `output_controller.py` | Virtual joystick (`uinput`) |
-| `main.py` | Async integration loop (~60 Hz) |
-| `plan.md` | Implementation plan and milestones |
-| `Initial Idea.txt` | Original goals and development philosophy |
-
-## Development milestones
-
-The project was built in vertical slices (see `plan.md`):
-
-1. **Raw input** — reliable `RotaryEvent` logging  
-2. **Steering state** — accumulated position and smoothing  
-3. **Virtual controller** — visible in `jstest-gtk` / `evtest`  
-4. **Game integration** — ETS2 steering bind  
-5. **Tuning** — drivable lane keeping  
-
-The golden rule during development: *Can I test this in ETS2 today?* If not, the task was probably too abstract.
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
-| ETS2 logs "No steering axis found" | Update to the racing-wheel profile (current `output_controller.py` uses `ABS_WHEEL`) and restart Steam after KnobWheel is running |
-| Steam says controller connected but ETS2 still ignores it | Restart Steam fully after KnobWheel starts — Steam does not hotplug uinput devices |
-| Wrong device suggested at startup | Pick **Consumer Control** for your keyboard — never the KnobWheel virtual device |
-| Flatpak Steam test prints `Not sharing "/dev/input"` | That warning is cosmetic; `devices=all` still passes device nodes through. Check `flatpak run --command=ls com.valvesoftware.Steam /dev/input/` to confirm `js0` is visible |
-| Volume changes while playing | Restart with grab enabled (`y` when prompted) on the Consumer Control device |
-| Axis too sensitive | Increase `--clicks` (e.g. `--clicks 100`) |
-
-## Safety notes
-
-- **Device grab:** `--grab` takes exclusive control of an input node. If the knob shares a device with your typing keys, grabbing can lock your keyboard. KnobWheel checks capabilities and warns; prefer the consumer-control event device when possible.
-- **Do not map knob to keys for steering** — digital left/right keys feel twitchy; use the virtual analog axis.
-- **Encoder jitter** is normal; use `--debounce` if you see duplicate events.
+| Phone page won't load | PC and phone must be on the same WiFi. Check the printed IP and that Windows Firewall is not blocking the port. |
+| "Enable Gyroscope" does nothing (iOS) | Some iOS versions only grant motion access over HTTPS. On Android it works over plain HTTP. |
+| Steering drifts while holding still | Increase `--deadzone`. |
+| Throttle pins steering to a lock | Make sure you are in **landscape** — the gravity-based tilt keeps the steer and pedal axes separate (see the math section). |
+| A control is reversed | Flip `STEER_SIGN` or `PEDAL_SIGN` near the top of the `<script>` in `phone_server.py`. |
+| Game doesn't see the controller | Start KnobWheel first, then launch the game. Restart the game if it was already open. |
+| Steering feels too twitchy / too slow | Lower / raise `--smoothing`. |
 
 ## Roadmap
 
-Roughly aligned with `Initial Idea.txt` and `plan.md`:
-
-- [x] Linux input detection and normalization  
-- [x] Steering simulation and virtual joystick  
-- [x] ETS2-oriented integration path  
-- [ ] Broader keyboard/hardware compatibility (avoid hardcoded vendor IDs)  
-- [ ] Steering feel tuning presets  
-- [ ] GUI (after feel is solid—PySide6 suggested in planning docs)  
-- [ ] Windows support (non-trivial; Linux first by design)  
+- [x] Phone gyroscope steering over WebSocket
+- [x] Throttle + brake via forward / back lean (landscape)
+- [x] Gravity-vector tilt sensing (no gimbal-lock flips)
+- [ ] On-screen calibration / re-center button
+- [ ] Adjustable steering curves (linear vs. eased)
+- [ ] Cross-platform controller output (Linux virtual gamepad)
 
 ## Contributing
 
-Contributions are welcome—issues, tuning presets for specific keyboards, documentation, and tests in real games are especially helpful.
+Contributions are welcome — issues, tuning presets, documentation, and tests in real games are especially helpful.
 
-1. Fork the repository and create a branch.  
-2. Keep changes focused; match existing Python style and module boundaries.  
-3. Verify with `input_detector.py`, `physics.py`, and `main.py` before opening a PR.  
-4. Describe your keyboard model and game when reporting feel issues.  
-
-For architecture and milestone context, read `plan.md` and `Initial Idea.txt`.
+1. Fork the repository and create a branch.
+2. Keep changes focused; match the existing Python style and module boundaries.
+3. Test with `python main_windows.py --no-controller` (connection + tilt) and in an actual game before opening a PR.
+4. Describe your phone model and the game when reporting feel issues.
 
 ## License
 
-A license file will be added before or as part of the public release. Until then, treat the repository as source-available for review and feedback; do not redistribute without the maintainer’s permission.
+A license file will be added before or as part of the public release. Until then, treat the repository as source-available for review and feedback; do not redistribute without the maintainer's permission.
 
 ## Acknowledgments
 
-Built for Linux with [python-evdev](https://python-evdev.readthedocs.io/). Inspired by anyone who looked at a volume knob and thought it deserved more responsibility.
+Built with [vgamepad](https://github.com/yannbouteiller/vgamepad) + [ViGEmBus](https://github.com/nefarius/ViGEmBus) for the virtual controller and [websockets](https://websockets.readthedocs.io/) for the phone link. Inspired by anyone who looked at a volume knob and thought it deserved more responsibility.
