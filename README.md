@@ -1,10 +1,10 @@
-# KnobWheel
+# GyroWheel
 
-Steer in driving games by **tilting your Android phone**. KnobWheel reads your phone's motion sensor in the browser, streams the tilt to your PC over local WiFi, and feeds a virtual Xbox controller that games like **Euro Truck Simulator 2** can bind as steering, throttle, and brake.
+Steer in driving games by **tilting your Android phone**. GyroWheel reads your phone's motion sensor in the browser, streams the tilt to your PC over local WiFi, and feeds a virtual Xbox controller that games like **Euro Truck Simulator 2** can bind as steering, throttle, and brake.
 
 No app to install on the phone — it is just a web page. No special hardware — your phone is the wheel.
 
-> **Where the name comes from:** KnobWheel began as an experiment in turning a mechanical keyboard's volume knob into a steering wheel. It has since grown up — the knob is gone and your phone's gyroscope is the wheel — but the name stuck.
+> **Where the name comes from:** GyroWheel evolved from KnobWheel, an experiment that turned a mechanical keyboard's volume knob into a steering wheel. The knob is long gone — your phone's gyroscope *is* the wheel now — and the new name finally says so.
 
 ## How it works
 
@@ -28,7 +28,7 @@ Game (ETS2 / ATS / any XInput game)
 
 `phone_server.py` is what the phone first talks to: it serves the controller web page over HTTP on port `WS_PORT + 1` (default `8766`), so the phone only needs one URL. `main_windows.py` wires the whole chain together in a ~60 Hz async loop.
 
-KnobWheel creates a **virtual gamepad**, not key presses — games see a continuous analog axis, closer to a software steering rack than a macro.
+GyroWheel creates a **virtual gamepad**, not key presses — games see a continuous analog axis, closer to a software steering rack than a macro.
 
 | File | Role |
 |------|------|
@@ -98,7 +98,7 @@ pip install -r requirements_windows.txt
 # 2. Install the ViGEmBus driver (one time)
 #    https://github.com/nefarius/ViGEmBus/releases
 
-# 3. Run KnobWheel
+# 3. Run GyroWheel
 python main_windows.py
 ```
 
